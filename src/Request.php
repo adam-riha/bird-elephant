@@ -19,9 +19,9 @@ class Request
 {
     protected array $credentials;
 
-    protected string $base_uri = 'https://api.twitter.com/';
+    protected string $base_uri = 'https://api.x.com/';
 
-    protected string $media_upload_path = 'media/upload.json';
+    protected string $media_upload_path = 'media/upload';
 
     private ?Client $uploadClient = null;
 
@@ -204,7 +204,7 @@ class Request
         ]));
 
         return $this->uploadClient = new Client([
-            'base_uri' => 'https://upload.twitter.com/1.1/',
+            'base_uri' => 'https://api.x.com/2/',
             'handler' => $stack
         ]);
     }
@@ -219,57 +219,37 @@ class Request
 
         list($mimeType, $totalBytes) = $this->getMediaInfo($media, $mimeType);
 
-        if ($this->isAsyncUpload($mimeType)) {
+        $mediaData = $this->initUpload($mimeType, $totalBytes);
 
-            $mediaData = $this->initUpload($mimeType, $totalBytes);
+        $mediaId = $mediaData->data->id;
 
-            $mediaId = $mediaData->media_id_string;
+        $this->appendUpload($media, $mediaId);
 
-            $this->appendUpload($media, $mediaId);
+        $status = $this->finalizeUpload($mediaId);
 
-            $this->finalizeUpload($mediaId);
-
+        if (isset($status->data->processing_info)) {
             // Wait for processing
 
             while (true) {
 
                 $status = $this->uploadStatus($mediaId);
 
-                if (!$status->processing_info || !in_array($status->processing_info->state, ['pending', 'in_progress'])) {
+                if (!$status->data->processing_info || !in_array($status->data->processing_info->state, ['pending', 'in_progress'])) {
                     break;
                 }
 
-                sleep($status->processing_info->check_after_secs);
-            }
-
-            if (!empty($status->processing_info->state) && $status->processing_info->state == 'failed') {
-                throw new \RuntimeException(
-                    $status_response->processing_info->error->name . (!empty($status_response->processing_info->error->message) ? ": " . $status_response->processing_info->error->message : ''),
-                    $status_response->processing_info->error->code ?? 0
-                );
-            }
-
-            return $mediaData;
-        } else {
-
-            try {
-                $request  = $this->getUploadClient()->request('POST', $this->media_upload_path, [
-                    'auth' => 'oauth',
-                    'multipart' => [
-                        [
-                            'name'     => 'media_data',
-                            'contents' => base64_encode(file_get_contents($media))
-                        ]
-                    ]
-                ]);
-
-                $body = $request->getBody()->getContents();
-
-                return json_decode($body, false, 512, JSON_THROW_ON_ERROR);
-            } catch (ClientException | ServerException $e) {
-                throw $e;
+                sleep($status->data->processing_info->check_after_secs);
             }
         }
+
+        if (!empty($status->data->processing_info->state) && $status->data->processing_info->state == 'failed') {
+            throw new \RuntimeException(
+                $status->data->processing_info->error->name . (!empty($status->data->processing_info->error->message) ? ": " . $status->data->processing_info->error->message : ''),
+                $status->data->processing_info->error->code ?? 0
+            );
+        }
+
+        return $mediaData;
     }
 
 
@@ -314,11 +294,23 @@ class Request
 
             $this->getUploadClient()->request('POST', $this->media_upload_path, [
                 'auth' => 'oauth',
-                'form_params' => [
-                    'command'  => 'APPEND',
-                    'media_id' => $mediaId,
-                    'media_data' => base64_encode(fread($fileHandle, self::ASYNC_MEDIA_CHUNKSIZE)),
-                    'segment_index' => $segmentIndex++
+                'multipart' => [
+                    [
+                        'name'     => 'command',
+                        'contents' => 'APPEND'
+                    ],
+                    [
+                        'name'     => 'media_id',
+                        'contents' => $mediaId
+                    ],
+                    [
+                        'name'     => 'segment_index',
+                        'contents' => $segmentIndex++
+                    ],
+                    [
+                        'name'     => 'media',
+                        'contents' => fread($fileHandle, self::ASYNC_MEDIA_CHUNKSIZE)
+                    ]
                 ]
             ]);
         }
@@ -332,15 +324,16 @@ class Request
      * @param string $mediaId
      * @throws GuzzleException
      */
-    private function finalizeUpload(string $mediaId): void
+    private function finalizeUpload(string $mediaId): object
     {
-        $this->getUploadClient()->request('POST', 'media/upload.json', [
+        $response = $this->getUploadClient()->request('POST', $this->media_upload_path, [
             'auth' => 'oauth',
             'form_params' => [
                 'command'  => 'FINALIZE',
                 'media_id' => $mediaId,
             ]
         ]);
+        return json_decode($response->getBody()->getContents(), false, 512, JSON_THROW_ON_ERROR);
     }
 
     /**
@@ -351,9 +344,9 @@ class Request
      */
     private function uploadStatus(string $mediaId): object
     {
-        $response = $this->getUploadClient()->request('GET', 'media/upload.json', [
+        $response = $this->getUploadClient()->request('GET', $this->media_upload_path, [
             'auth' => 'oauth',
-            'form_params' => [
+            'query' => [
                 'command'  => 'STATUS',
                 'media_id' => $mediaId,
             ]
@@ -421,21 +414,8 @@ class Request
                 return $subtype == 'gif' ? 'tweet_gif' : 'tweet_image';
             case 'video':
                 return 'tweet_video';
-                break;
         }
-    }
 
-    /**
-     * Determine whether given MIME type should be uploaded synchronously or asynchronously.
-     *
-     * @param string $mimeType
-     * @throws GuzzleException
-     */
-    private function isAsyncUpload($mimeType)
-    {
-        return in_array(
-            $this->getMediaCategeoryForMimeType($mimeType),
-            self::ASYNC_MEDIA_CATEGORIES,
-        );
+        throw new \RuntimeException('Unsupported media type: ' . $mimeType);
     }
 }
