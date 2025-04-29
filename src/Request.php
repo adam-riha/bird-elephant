@@ -219,17 +219,17 @@ class Request
 
         list($mimeType, $totalBytes) = $this->getMediaInfo($media, $mimeType);
 
-        logger()->channel('tw')->info("\t uploadMedia ${$totalBytes}");
+        logger()->channel('tw')->info("\t uploadMedia {$totalBytes}");
 
         $mediaData = $this->initUpload($mimeType, $totalBytes);
 
         $mediaId = $mediaData->data->id;
 
-        logger()->channel('tw')->info("\t initUpload ${$mediaId}");
+        logger()->channel('tw')->info("\t initUpload {$mediaId}");
 
         $this->appendUpload($media, $mediaId);
 
-        logger()->channel('tw')->info("\t finalizeUpload ${$mediaId}");
+        logger()->channel('tw')->info("\t finalizeUpload {$mediaId}");
 
         $status = $this->finalizeUpload($mediaId);
 
@@ -306,7 +306,7 @@ class Request
 
         while (!feof($fileHandle)) {
 
-            logger()->channel('tw')->info("\t\t appendUpload ${$segmentIndex}");
+            logger()->channel('tw')->info("\t\t appendUpload {$segmentIndex}");
 
             $this->getUploadClient()->request('POST', $this->media_upload_path, [
                 'auth' => 'oauth',
