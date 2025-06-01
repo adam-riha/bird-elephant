@@ -216,10 +216,15 @@ class Request
      */
     public function uploadMedia(string $media, ?string $mimeType)
     {
+        logger()->channel('tw')->info("\t uploadMedia NEW endpoints");
 
         list($mimeType, $totalBytes) = $this->getMediaInfo($media, $mimeType);
 
         logger()->channel('tw')->info("\t uploadMedia {$totalBytes}");
+
+//        if ($this->isAsyncUpload($mimeType)) {
+
+        logger()->channel('tw')->info("\t isAsyncUpload: true");
 
         $mediaData = $this->initUpload($mimeType, $totalBytes);
 
@@ -263,7 +268,48 @@ class Request
             );
         }
 
-        return $mediaData;
+        // This is a workaround to normalize the response structure for async and sync uploads and preserve
+        // backwards compatibility. The documentation does not match what the API returns for the synchronous upload
+        // endpoint.
+        // https://docs.x.com/x-api/media/media-upload and https://docs.x.com/x-api/media/media-upload-status
+        // Both of these pages show the same response object, but the synchronous upload endpoint returns a
+        // different object.
+        $returnData = new \stdClass();
+        $returnData->media_id_string = $status->data->id;
+
+        return $returnData;
+//        }
+//        else {
+//
+//            logger()->channel('tw')->info("\t isAsyncUpload: false");
+//
+//            try {
+//                $request  = $this->getUploadClient()->request('POST', $this->media_upload_path, [
+//                    'auth' => 'oauth',
+//                    'multipart' => [
+//                        [
+//                            'name'     => 'media_data',
+//                            'contents' => base64_encode(file_get_contents($media))
+//                        ]
+//                    ]
+//                ]);
+//
+//                $body = $request->getBody()->getContents();
+//
+//                $response = json_decode($body, false, 512, JSON_THROW_ON_ERROR);
+//
+//                // This is a workaround to normalize the response structure for async and sync uploads and preserve backwards compatibility.
+//                // The documentation does not match what the API returns for this endpoint.
+//                // https://docs.x.com/x-api/media/media-upload and https://docs.x.com/x-api/media/media-upload-status
+//                // Both of these pages show the same response object, but this endpoint returns a different object.
+//                $returnData = new \stdClass();
+//                $returnData->media_id_string = $response->id;
+//
+//                return $returnData;
+//            } catch (ClientException | ServerException $e) {
+//                throw $e;
+//            }
+//        }
     }
 
 
@@ -277,10 +323,9 @@ class Request
     private function initUpload(string $mimeType, int $totalBytes): object
     {
 
-        $response = $this->getUploadClient()->request('POST', $this->media_upload_path, [
+        $response = $this->getUploadClient()->request('POST', $this->media_upload_path . '/initialize', [
             'auth' => 'oauth',
-            'form_params' => [
-                'command'        => 'INIT',
+            'json' => [
                 'media_category' => $this->getMediaCategeoryForMimeType($mimeType),
                 'media_type'     => $mimeType,
                 'total_bytes'    => $totalBytes,
@@ -308,17 +353,9 @@ class Request
 
             logger()->channel('tw')->info("\t\t appendUpload {$segmentIndex}");
 
-            $this->getUploadClient()->request('POST', $this->media_upload_path, [
+            $this->getUploadClient()->request('POST', $this->media_upload_path . "/$mediaId/append", [
                 'auth' => 'oauth',
                 'multipart' => [
-                    [
-                        'name'     => 'command',
-                        'contents' => 'APPEND'
-                    ],
-                    [
-                        'name'     => 'media_id',
-                        'contents' => $mediaId
-                    ],
                     [
                         'name'     => 'segment_index',
                         'contents' => $segmentIndex++
@@ -346,12 +383,8 @@ class Request
      */
     private function finalizeUpload(string $mediaId): object
     {
-        $response = $this->getUploadClient()->request('POST', $this->media_upload_path, [
+        $response = $this->getUploadClient()->request('POST', $this->media_upload_path . "/$mediaId/finalize", [
             'auth' => 'oauth',
-            'form_params' => [
-                'command'  => 'FINALIZE',
-                'media_id' => $mediaId,
-            ]
         ]);
         return json_decode($response->getBody()->getContents(), false, 512, JSON_THROW_ON_ERROR);
     }
@@ -367,7 +400,10 @@ class Request
         $response = $this->getUploadClient()->request('GET', $this->media_upload_path, [
             'auth' => 'oauth',
             'query' => [
-                'command'  => 'STATUS',
+                // The command parameter is confusingly documented. In this post they announced that the command
+                // parameter is now deprecated: https://devcommunity.x.com/t/media-upload-endpoints-update-and-extended-migration-deadline/241818
+                // However, in their documentation https://docs.x.com/x-api/media/media-upload-status they say that the
+                // command parameter is still required.
                 'media_id' => $mediaId,
             ]
         ]);
@@ -437,5 +473,19 @@ class Request
         }
 
         throw new \RuntimeException('Unsupported media type: ' . $mimeType);
+    }
+
+    /**
+     * Determine whether given MIME type should be uploaded synchronously or asynchronously.
+     *
+     * @param string $mimeType
+     * @throws GuzzleException
+     */
+    private function isAsyncUpload($mimeType)
+    {
+        return in_array(
+            $this->getMediaCategeoryForMimeType($mimeType),
+            self::ASYNC_MEDIA_CATEGORIES,
+        );
     }
 }
