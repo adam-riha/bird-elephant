@@ -216,25 +216,15 @@ class Request
      */
     public function uploadMedia(string $media, ?string $mimeType)
     {
-        logger()->channel('tw')->info("\t uploadMedia NEW endpoints");
-
         list($mimeType, $totalBytes) = $this->getMediaInfo($media, $mimeType);
 
-        logger()->channel('tw')->info("\t uploadMedia {$totalBytes}");
-
 //        if ($this->isAsyncUpload($mimeType)) {
-
-        logger()->channel('tw')->info("\t isAsyncUpload: true");
 
         $mediaData = $this->initUpload($mimeType, $totalBytes);
 
         $mediaId = $mediaData->data->id;
 
-        logger()->channel('tw')->info("\t initUpload {$mediaId}");
-
         $this->appendUpload($media, $mediaId);
-
-        logger()->channel('tw')->info("\t finalizeUpload {$mediaId}");
 
         $status = $this->finalizeUpload($mediaId);
 
@@ -245,17 +235,9 @@ class Request
 
                 $status = $this->uploadStatus($mediaId);
 
-                try {
-                    if ($status->data->processing_info) {
-                        logger()->channel('tw')->info("\t\t processing_info: " . $status->data->processing_info->state);
-                    }
-                } catch (\Throwable $th) {}
-
                 if (!$status->data->processing_info || !in_array($status->data->processing_info->state, ['pending', 'in_progress'])) {
                     break;
                 }
-
-                logger()->channel('tw')->info("\t\t check_after_secs: " . $status->data->processing_info->check_after_secs);
 
                 sleep($status->data->processing_info->check_after_secs);
             }
@@ -350,9 +332,7 @@ class Request
         $segmentIndex = 0;
 
         while (!feof($fileHandle)) {
-
-            logger()->channel('tw')->info("\t\t appendUpload {$segmentIndex}");
-
+            
             $this->getUploadClient()->request('POST', $this->media_upload_path . "/$mediaId/append", [
                 'auth' => 'oauth',
                 'multipart' => [
