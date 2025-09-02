@@ -239,7 +239,11 @@ class Request
                     break;
                 }
 
-                sleep($status->data->processing_info->check_after_secs);
+                try {
+                    sleep($status->data->processing_info->check_after_secs);
+                } catch (\Throwable $th) {
+                    sleep(20);
+                }
             }
         }
 
