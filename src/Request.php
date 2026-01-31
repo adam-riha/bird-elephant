@@ -248,10 +248,19 @@ class Request
         }
 
         if (!empty($status->data->processing_info->state) && $status->data->processing_info->state == 'failed') {
-            throw new \RuntimeException(
-                $status->data->processing_info->error->name . (!empty($status->data->processing_info->error->message) ? ": " . $status->data->processing_info->error->message : ''),
-                $status->data->processing_info->error->code ?? 0
-            );
+
+            if (isset($status->data->processing_info->error)) {
+                throw new \RuntimeException(
+                    $status->data->processing_info->error->name . (!empty($status->data->processing_info->error->message) ? ": " . $status->data->processing_info->error->message : ''),
+                    $status->data->processing_info->error->code ?? 0
+                );
+            }
+
+            logger()->error("Twitter media upload failed, no error message provided", [
+                'status' => json_encode($status, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ]);
+
+            throw new \RuntimeException("Twitter media upload failed, no error message provided",);
         }
 
         // This is a workaround to normalize the response structure for async and sync uploads and preserve
@@ -336,7 +345,7 @@ class Request
         $segmentIndex = 0;
 
         while (!feof($fileHandle)) {
-            
+
             $this->getUploadClient()->request('POST', $this->media_upload_path . "/$mediaId/append", [
                 'auth' => 'oauth',
                 'multipart' => [
